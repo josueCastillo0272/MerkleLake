@@ -1,0 +1,23 @@
+// Elasticsearch index mapping (outline only)
+// Week 0 – conceptual design, not valid JSON yet.
+
+{
+  // exact tenant filter
+    "tenant_id": "keyword",
+
+  // event timestamp for time range queries
+    "@timestamp": "date",
+
+  // searchable + exact form of message
+    "message": "text + keyword (raw)",
+
+  // dynamic attributes (tags)
+    "attrs.*": "keyword/text (auto)",
+
+  // integrity linkage fields
+    "block_id": "keyword",
+    "leaf_idx": "integer",
+    "root_hash": "keyword",
+
+  // later: define alias logs-v1 and ILM hot→warm policy (Week 4)
+}
