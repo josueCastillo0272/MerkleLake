@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 
 ZERO_LINK: str = "0" * 64  # 32-byte link hash encoded as hex (genesis prev_link)
 
@@ -49,20 +50,11 @@ def _canonical_header_string(
     Contract:
     - EXACT order with '|' delimiter:
         f"{block_id}|{tenant_id}|{ts_start}|{ts_end}|{root_hash_hex}|{prev_link_hash_hex}"
-    - root_hash_hex and prev_link_hash_hex MUST be lowercase hex (validate upstream).
-    - No surrounding whitespace, no trailing delimiter.
-    - Timestamps must be plain decimal strings (no zero padding).
-
-    Why:
-    - Any change to field values or order must change the link hash.
-      - The recipe is part of the *protocol*; never silently change it.
-
-    Returns:
-    The canonical string to be hashed with SHA-256.
-
-    NOTE: Implement here as a pure function; do not hash yet.
     """
-    raise NotImplementedError("Return the exact pipe-delimited canonical string")
+    return (
+        f"{block_id}|{tenant_id}|{ts_start}|{ts_end}|"
+        f"{root_hash_hex}|{prev_link_hash_hex}"
+    )
 
 
 def compute_link_hash_hex(
@@ -76,18 +68,54 @@ def compute_link_hash_hex(
     """
     Compute lowercase-hex SHA-256 over the canonical header string.
 
-    Implementation guidance:
-    - Use hashlib.sha256(s.encode('utf-8')).hexdigest()
-    - Must produce 64-character lowercase hex.
-
-    Input validation (recommended):
-    - root_hash_hex and prev_link_hash_hex are 64-hex strings.
-    - ts_start <= ts_end.
-
     Returns:
     64-char lowercase hex link for this header.
     """
-    raise NotImplementedError("Hash the canonical string and return hexdigest()")
+    # Basic validation: 64-char hex strings and non-decreasing timestamps.
+    if len(root_hash_hex) != 64:
+        raise ValueError("root_hash_hex must be a 64-character hex string")
+    if len(prev_link_hash_hex) != 64:
+        raise ValueError("prev_link_hash_hex must be a 64-character hex string")
+
+    # Validate that they are actually hex.
+    try:
+        int(root_hash_hex, 16)
+        int(prev_link_hash_hex, 16)
+    except ValueError as exc:
+        raise ValueError(
+            "root_hash_hex and prev_link_hash_hex must be valid hex"
+        ) from exc
+
+    if ts_start > ts_end:
+        raise ValueError("ts_start must be <= ts_end")
+
+    s = _canonical_header_string(
+        block_id=block_id,
+        tenant_id=tenant_id,
+        ts_start=ts_start,
+        ts_end=ts_end,
+        root_hash_hex=root_hash_hex,
+        prev_link_hash_hex=prev_link_hash_hex,
+    )
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def link_hash(header: BlockHeader) -> str:
+    """
+    Recompute the link hash for an existing BlockHeader.
+
+    Returns:
+        64-char lowercase hex string, equal to header.link_hash_hex
+        if the header fields have not been modified.
+    """
+    return compute_link_hash_hex(
+        block_id=header.block_id,
+        tenant_id=header.tenant_id,
+        ts_start=header.ts_start,
+        ts_end=header.ts_end,
+        root_hash_hex=header.root_hash_hex,
+        prev_link_hash_hex=header.prev_link_hash_hex,
+    )
 
 
 def make_header(
@@ -102,18 +130,41 @@ def make_header(
     """
     Assemble a BlockHeader and compute its link_hash_hex.
 
-    Steps (exactly this order):
-    1) Normalize input hex strings to lowercase.
-    2) Validate lengths (64) and ts_start <= ts_end.
-    3) Derive link_hash_hex = compute_link_hash_hex(...)
-    4) Return BlockHeader dataclass with all fields set.
-
     Returns:
     BlockHeader
 
     Raises:
     ValueError on malformed inputs (bad hex length, bad timestamps).
     """
-    raise NotImplementedError(
-        "Validate inputs, compute link hash, and return BlockHeader"
+    # 1) Normalize input hex strings to lowercase.
+    root_hash_hex = root_hash_hex.lower()
+    prev_link_hash_hex = prev_link_hash_hex.lower()
+
+    # 2) Validate lengths (64) and ts_start <= ts_end.
+    if len(root_hash_hex) != 64:
+        raise ValueError("root_hash_hex must be a 64-character hex string")
+    if len(prev_link_hash_hex) != 64:
+        raise ValueError("prev_link_hash_hex must be a 64-character hex string")
+    if ts_start > ts_end:
+        raise ValueError("ts_start must be <= ts_end")
+
+    # 3) Derive link_hash_hex.
+    link_hash_hex = compute_link_hash_hex(
+        block_id=block_id,
+        tenant_id=tenant_id,
+        ts_start=ts_start,
+        ts_end=ts_end,
+        root_hash_hex=root_hash_hex,
+        prev_link_hash_hex=prev_link_hash_hex,
+    )
+
+    # 4) Return BlockHeader dataclass with all fields set.
+    return BlockHeader(
+        block_id=block_id,
+        tenant_id=tenant_id,
+        ts_start=ts_start,
+        ts_end=ts_end,
+        root_hash_hex=root_hash_hex,
+        prev_link_hash_hex=prev_link_hash_hex,
+        link_hash_hex=link_hash_hex,
     )

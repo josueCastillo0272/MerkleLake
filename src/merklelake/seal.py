@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Tuple
 
-from .proofs.merkle import build_levels, root_of, b2hex  # to be implemented by you
+from .proofs.merkle import build_levels, root_of, b2hex
 from .proofs.chain import (
     BlockHeader,
     make_header,
     ZERO_LINK,
-)  # to be implemented by you
+)
 
 
 def _canon_event_bytes(ev: Dict) -> bytes:
@@ -34,7 +34,14 @@ def _canon_event_bytes(ev: Dict) -> bytes:
     - Re-encoding the same dict yields identical bytes (determinism).
     - Hashing these bytes produces leaf hashes equal to those used to build the tree.
     """
-    raise NotImplementedError("Return canonical UTF-8 bytes for the event JSON")
+    # json.dumps will raise TypeError/ValueError on non-serializable input.
+    s = json.dumps(
+        ev,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return s.encode("utf-8")
 
 
 def _order_events(events: List[Dict]) -> List[Dict]:
@@ -58,7 +65,21 @@ def _order_events(events: List[Dict]) -> List[Dict]:
     - Equal timestamps preserve initial relative order (stability).
     - Sealing the same input twice yields identical order.
     """
-    raise NotImplementedError("Stable sort by (ingest_ts, original_position)")
+    indexed: List[Tuple[int, int, Dict]] = []
+
+    for pos, ev in enumerate(events):
+        if "ingest_ts" not in ev:
+            raise KeyError("Event missing required 'ingest_ts' field")
+        ts = ev["ingest_ts"]
+        if not isinstance(ts, int):
+            raise TypeError("'ingest_ts' must be an int")
+        indexed.append((ts, pos, ev))
+
+    # Sort by (ingest_ts, original_position) to guarantee determinism.
+    indexed.sort(key=lambda t: (t[0], t[1]))
+
+    # Return only the original event dicts, in new order.
+    return [ev for _, _, ev in indexed]
 
 
 def _to_jsonl(ordered_events: List[Dict]) -> str:
@@ -75,9 +96,9 @@ def _to_jsonl(ordered_events: List[Dict]) -> str:
     - Splitting by '\n' produces len == len(ordered_events).
     - Encoding line i back to bytes reproduces the exact bytes hashed for leaf i.
     """
-    raise NotImplementedError(
-        "Join canonical JSON strings with '\\n' (no trailing newline)"
-    )
+    lines: List[str] = [_canon_event_bytes(ev).decode("utf-8") for ev in ordered_events]
+    # join() on empty list returns "", so no trailing newline either way.
+    return "\n".join(lines)
 
 
 def seal_block(
@@ -112,6 +133,34 @@ def seal_block(
     - Mapping: for each line i, verify inclusion of line_bytes with proof_for(levels, i).
     - Tamper: change one char in line j -> verification for leaf_idx=j must fail.
     """
-    raise NotImplementedError(
-        "Implement in-memory sealing pipeline and return (header, jsonl, levels)"
+    if not events:
+        raise ValueError("Cannot seal an empty event batch")
+
+    # 1) Deterministic ordering by ingest_ts (then stable tie-break).
+    ordered_events = _order_events(events)
+
+    # 2) Canonical JSONL text.
+    events_jsonl_text = _to_jsonl(ordered_events)
+
+    # 3) Build Merkle levels from EXACT canonical bytes.
+    leaf_payloads: List[bytes] = [_canon_event_bytes(ev) for ev in ordered_events]
+    merkle_levels = build_levels(leaf_payloads)
+
+    # 4) Compute root hash.
+    root = root_of(merkle_levels)
+
+    # 5) Build BlockHeader with timestamp range and root.
+    ingest_ts_values = [ev["ingest_ts"] for ev in ordered_events]
+    ts_start = min(ingest_ts_values)
+    ts_end = max(ingest_ts_values)
+
+    header = make_header(
+        tenant_id=tenant_id,
+        block_id=block_id,
+        ts_start=ts_start,
+        ts_end=ts_end,
+        root_hash_hex=b2hex(root),
+        prev_link_hash_hex=prev_link_hash_hex,
     )
+
+    return header, events_jsonl_text, merkle_levels
