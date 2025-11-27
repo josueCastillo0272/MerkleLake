@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: merklelake
+Version: 0.1.0
+Summary: Tamper-evident log core (Week 1 skeleton: Merkle + headers + sealing)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: pydantic
+Requires-Dist: minio
+Requires-Dist: elasticsearch
+
+# MerkleLake
+
+A verifiable log storage + search system with cryptographic proofs.

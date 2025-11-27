@@ -12,13 +12,13 @@ class BlockHeader:
     Minimal block header that binds a Merkle root to a hash-chain.
 
     Fields:
-    block_id           : str  - unique identifier for the block (format T.B.D. later)
-    tenant_id          : str  - multi-tenant scoping
-    ts_start           : int  - start of time window (pick one unit and keep it: seconds or ms)
-    ts_end             : int  - end of time window (inclusive or exclusive: document and use consistently)
-    root_hash_hex      : str  - lowercase hex of the Merkle root
-    prev_link_hash_hex : str  - lowercase hex link hash from previous block (ZERO_LINK for first)
-    link_hash_hex      : str  - lowercase hex link for this block (derived; see compute_link_hash_hex)
+    block_id : str  - unique identifier for the block (format T.B.D. later)
+    tenant_id: str  - multi-tenant scoping
+    ts_start: int  - start of time window (pick one unit and keep it: seconds or ms)
+    ts_end: int  - end of time window (inclusive or exclusive: document and use consistently)
+    root_hash_hex: str  - lowercase hex of the Merkle root
+    prev_link_hash_hex: str  - lowercase hex link hash from previous block (ZERO_LINK for first)
+    link_hash_hex: str  - lowercase hex link for this block (derived; see compute_link_hash_hex)
 
     Invariants (must hold after construction):
     - len(prev_link_hash_hex) == 64 and len(link_hash_hex) == 64

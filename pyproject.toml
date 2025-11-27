@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Tamper-evident log core (Week 1 skeleton: Merkle + headers + sealing)"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "minio",
+    "elasticsearch"
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
