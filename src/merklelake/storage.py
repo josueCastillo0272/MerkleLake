@@ -1,15 +1,14 @@
 """
 Storage layer for MerkleLake blocks (object storage).
 
-This module defines:
+This module provides helpers to construct a MinIO client from environment
+variables and a ``BlockStorage`` wrapper for reading and writing sealed blocks.
 
-    - get_minio_client: construct a MinIO client from env vars.
-    - BlockStorage: high-level API to store and retrieve blocks.
-
-Design notes:
-    - We treat MinIO as S3-compatible object storage.
-    - We separate "blocks" (headers) from "events" (JSONL payloads) into
-        distinct buckets to match the storage layout docs.
+Typical usage example:
+    client = get_minio_client()
+    config = BlockStorageConfig(blocks_bucket="blocks", events_bucket="events")
+    storage = BlockStorage(client=client, config=config)
+    storage.put_block(header, events_jsonl)
 """
 
 from __future__ import annotations
@@ -20,26 +19,29 @@ import os
 from dataclasses import dataclass, asdict
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:  # pragma: no cover - type-checking only
+if TYPE_CHECKING:
     from minio import Minio
 
 from .proofs.chain import BlockHeader
 
 
 def _parse_secure_flag(value: str) -> bool:
-    """Parse MERKLELAKE_MINIO_SECURE string into a boolean.
+    """Converts a MERKLELAKE_MINIO_SECURE value to a boolean.
 
-    Accepted truthy values (case-insensitive): "true", "1", "yes", "y", "on".
-    Accepted falsy values: "false", "0", "no", "n", "off", "".
+    Accepted truthy values (case-insensitive) are:
+    "true", "1", "yes", "y", "on".
+
+    Accepted falsy values are:
+    "false", "0", "no", "n", "off", and the empty string.
 
     Args:
-        value: String flag from the environment.
+        value: Raw string flag from the environment.
 
     Returns:
         True if the flag is interpreted as secure, False otherwise.
 
     Raises:
-        ValueError: If the value cannot be interpreted as a boolean.
+        ValueError: If the value cannot be interpreted as a boolean flag.
     """
     v = value.strip().lower()
     if v in ("true", "1", "yes", "y", "on"):
@@ -50,20 +52,22 @@ def _parse_secure_flag(value: str) -> bool:
 
 
 def get_minio_client() -> "Minio":
-    """Construct a MinIO client configured from environment variables.
+    """Creates a MinIO client configured from environment variables.
 
-    Environment:
-        MERKLELAKE_MINIO_ENDPOINT: Endpoint, default "localhost:9000".
-        MERKLELAKE_MINIO_ACCESS_KEY: Access key, default "minioadmin".
-        MERKLELAKE_MINIO_SECRET_KEY: Secret key, default "minioadmin".
-        MERKLELAKE_MINIO_SECURE: "true"/"false" etc., default "false".
+    The following environment variables are consulted:
+
+    * MERKLELAKE_MINIO_ENDPOINT: MinIO endpoint (default "localhost:9000").
+    * MERKLELAKE_MINIO_ACCESS_KEY: Access key (default "minioadmin").
+    * MERKLELAKE_MINIO_SECRET_KEY: Secret key (default "minioadmin").
+    * MERKLELAKE_MINIO_SECURE: TLS flag such as "true" or "false"
+        (default "false").
 
     Returns:
-        A configured Minio client instance.
+        A configured ``Minio`` client instance.
 
     Raises:
-        ValueError: If the endpoint is missing/blank or the secure flag is invalid.
-        ImportError: If the minio package is not installed.
+        ValueError: If the endpoint is empty or the secure flag is invalid.
+        ImportError: If the ``minio`` package is not installed.
     """
     from minio import Minio  # type: ignore[import-not-found]
 
@@ -87,11 +91,11 @@ def get_minio_client() -> "Minio":
 
 @dataclass
 class BlockStorageConfig:
-    """Configuration for BlockStorage.
+    """Configuration for ``BlockStorage``.
 
     Attributes:
-        blocks_bucket: Bucket name for block headers (block.json).
-        events_bucket: Bucket name for event payloads (events.jsonl).
+        blocks_bucket: Bucket name for block headers (``block.json``).
+        events_bucket: Bucket name for event payloads (``events.jsonl``).
     """
 
     blocks_bucket: str
@@ -101,8 +105,8 @@ class BlockStorageConfig:
 class BlockStorage:
     """High-level API for storing MerkleLake blocks in MinIO.
 
-    This class manages bucket creation and object naming but does not
-    understand Merkle trees or proofs.
+    This wrapper manages bucket creation and object naming. It does not
+    implement Merkle trees, proofs, or any cryptographic logic.
     """
 
     def __init__(
@@ -110,41 +114,41 @@ class BlockStorage:
         client: "Minio",
         config: BlockStorageConfig,
     ) -> None:
-        """Initialize the storage wrapper.
+        """Initializes ``BlockStorage``.
 
         Args:
-            client: A Minio client instance (or test double).
-            config: Storage configuration with bucket names.
+            client: A ``Minio`` client instance (or a compatible test double).
+            config: Storage configuration specifying bucket names.
         """
         self._client = client
         self._config = config
 
     @property
     def client(self) -> "Minio":
-        """Return the underlying MinIO client.
+        """Returns the underlying MinIO client.
 
         Returns:
-            The Minio client passed at initialization.
+            The ``Minio`` client passed at initialization.
         """
         return self._client
 
     @property
     def config(self) -> BlockStorageConfig:
-        """Return the storage configuration.
+        """Returns the storage configuration.
 
         Returns:
-            The BlockStorageConfig used by this instance.
+            The ``BlockStorageConfig`` used by this instance.
         """
         return self._config
 
     def ensure_buckets(self) -> None:
-        """Ensure the configured buckets exist in MinIO.
+        """Ensures that the configured buckets exist in MinIO.
 
-        For each bucket in the configuration, this method checks
-        existence and creates the bucket if it does not yet exist.
+        For each bucket in the configuration, this method checks whether the
+        bucket exists and creates it if it does not.
 
         Raises:
-            Any exception raised by the underlying Minio client.
+            Any exception raised by the underlying MinIO client.
         """
         for bucket in (self._config.blocks_bucket, self._config.events_bucket):
             exists = self._client.bucket_exists(bucket)
@@ -152,20 +156,22 @@ class BlockStorage:
                 self._client.make_bucket(bucket)
 
     def put_block(self, header: BlockHeader, events_jsonl: str) -> None:
-        """Store a sealed block (header + events JSONL) in object storage.
+        """Stores a sealed block (header and events) in object storage.
 
-        This writes the header JSON and events JSONL to separate buckets
-        using a fixed key layout: `<tenant_id>/<block_id>/block.json` and
-        `<tenant_id>/<block_id>/events.jsonl`.
+        The header JSON and events JSONL are written to separate buckets using
+        the following key layout:
+
+        * ``<tenant_id>/<block_id>/block.json``
+        * ``<tenant_id>/<block_id>/events.jsonl``
 
         Args:
-            header: BlockHeader describing the sealed block.
-            events_jsonl: JSON Lines text for the block's events.
+            header: Block header describing the sealed block.
+            events_jsonl: JSON Lines text containing the block's events.
 
         Raises:
-            ValueError: If tenant_id or block_id are empty or if events_jsonl
-                is not a string.
-            Any exception raised by the underlying Minio client.
+            ValueError: If ``tenant_id`` or ``block_id`` on the header are
+                missing or empty, or if ``events_jsonl`` is not a string.
+            Any exception raised by the underlying MinIO client.
         """
         tenant_id = getattr(header, "tenant_id", None)
         block_id = getattr(header, "block_id", None)
@@ -205,6 +211,53 @@ class BlockStorage:
             content_type="application/json",
         )
 
-    # Optional future methods (for proof/api layer) can be added later:
-    # - get_block_header(tenant_id, block_id) -> BlockHeader
-    # - get_events_jsonl(tenant_id, block_id) -> str
+    def get_block_header(self, tenant_id: str, block_id: str) -> BlockHeader:
+        """Retrieves the metadata file (``block.json``) for a specific block.
+
+        Args:
+            tenant_id: Tenant identifier.
+            block_id: Block identifier.
+
+        Returns:
+            A ``BlockHeader`` parsed from the stored ``block.json`` file.
+
+        Raises:
+            ValueError: If the header object cannot be fetched or parsed.
+        """
+        key = f"{tenant_id}/{block_id}/block.json"
+        try:
+            response = self._client.get_object(self._config.blocks_bucket, key)
+            try:
+                data = response.read()
+                header_dict = json.loads(data)
+                return BlockHeader(**header_dict)
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"Failed to fetch block header for {key}") from e
+
+    def get_events_jsonl(self, tenant_id: str, block_id: str) -> str:
+        """Retrieves the raw event data (``events.jsonl``) for a block.
+
+        Args:
+            tenant_id: Tenant identifier.
+            block_id: Block identifier.
+
+        Returns:
+            A JSON Lines string containing all events in the block.
+
+        Raises:
+            ValueError: If the events file cannot be fetched.
+        """
+        key = f"{tenant_id}/{block_id}/events.jsonl"
+        try:
+            response = self._client.get_object(self._config.events_bucket, key)
+            try:
+                data = response.read()
+                return data.decode("utf-8")
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"Failed to fetch events for {key}") from e
