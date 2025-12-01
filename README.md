@@ -113,7 +113,7 @@ curl -X POST http://localhost:8000/v1/search \
 {
   "hits": [
     {
-      "event_meta": { ... },
+      "event_meta": { "..." },
       "block_id": "acme-corp-...",
       "leaf_idx": 0,
       "ingest_ts": 1732000000000
@@ -138,7 +138,7 @@ curl "http://localhost:8000/v1/proof?tenant_id=acme-corp&block_id=<BLOCK_ID>&lea
     ["<sibling_hash>", "left"]
   ],
   "root_hash": "<merkle_root>",
-  "block_header": { ... }
+  "block_header": { "..." }
 }
 ```
 
