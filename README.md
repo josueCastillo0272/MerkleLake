@@ -33,9 +33,10 @@ The system consists of the following core components:
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/josuecastillo0272/merklelake.git](https://github.com/josuecastillo0272/merklelake.git)
+    git clone https://github.com/josuecastillo0272/merklelake.git
     cd merklelake
     ```
+
 
 2.  **Start Infrastructure (MinIO, Elasticsearch, Redis):**
     ```bash
@@ -92,7 +93,8 @@ curl -X POST http://localhost:8000/v1/logs \
 }
 ```
 
-### 2. Search Logs (`POST /v1/search)`)
+### 2. Search Logs (`POST /v1/search`)
+
 
 Search for logs using Lucene syntax.
 
@@ -120,7 +122,7 @@ curl -X POST http://localhost:8000/v1/search \
 }
 ```
 
-## 3. Get Cryptographic Proof (GET /v1/proof)
+### 3. Get Cryptographic Proof (GET /v1/proof)
 
 Request a Merkle proof for a specific log entry (identified by block_id and leaf_idx from the search result).
 
@@ -140,7 +142,7 @@ curl "http://localhost:8000/v1/proof?tenant_id=acme-corp&block_id=<BLOCK_ID>&lea
 }
 ```
 
-## 4. Get Latest Checkpoint (GET /v1/checkpoint)
+### 4. Get Latest Checkpoint (GET /v1/checkpoint)
 
 Retrieve the latest "tip" of the hash chain for auditing.
 
