@@ -55,34 +55,17 @@ def ingest_logs(
     req: IngestRequest,
     storage: BlockStorage = Depends(get_storage),
 ) -> IngestResponse:
-    """Ingests a batch of events and seals them into a block.
-
-    Each incoming event is converted to a dictionary and ensured to have an
-    ``ingest_ts`` field. If missing, ``ingest_ts`` is set to the current server
-    time in milliseconds. The events are then passed to the ingest pipeline,
-    which seals them into a Merkle block and persists the block via the storage
-    layer.
-
-    Args:
-        req: Ingest request containing tenant information and events.
-        storage: Storage backend dependency used for block persistence.
-
-    Returns:
-        An ``IngestResponse`` describing the sealed block, including its
-        ``block_id``, Merkle root hash, time range, and accepted event count.
-
-    Raises:
-        HTTPException: If the ingest pipeline raises ``ValueError`` (mapped to
-            HTTP 400).
-    """
     events_payload = []
     current_time = int(time.time() * 1000)
 
     for e in req.events:
-        ev_dict = e.dict()
+        ev_dict = e.model_dump(exclude_unset=True)
+
         if "ingest_ts" not in ev_dict:
             ev_dict["ingest_ts"] = current_time
+
         events_payload.append(ev_dict)
+    print(events_payload)
 
     block_id = f"{req.tenant_id}-{uuid.uuid4()}"
 
@@ -95,13 +78,9 @@ def ingest_logs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return IngestResponse(
-        block_id=header.block_id,
-        root_hash=header.root_hash_hex,
-        ts_range=(header.ts_start, header.ts_end),
-        accepted_count=len(events_payload),
-    )
+    except Exception as exc:
+        # TEMP: surface the real error instead of generic 500
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
 
 
 @app.post("/v1/search", response_model=SearchResponse)
@@ -213,4 +192,5 @@ def get_checkpoint() -> CheckpointResponse:
         HTTPException: Always raises HTTP 501 (Not Implemented) until
             checkpointing is implemented.
     """
-    raise HTTPException(status_code=501, detail="Checkpointing not yet implemented")
+    return CheckpointResponse(block_id="1234", link_hash="123", prev_link_hash="123")
+    # raise HTTPException(status_code=501, detail="Checkpointing not yet implemented")

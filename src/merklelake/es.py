@@ -92,6 +92,9 @@ def ensure_events_index(
     client.indices.create(index=index_name, body=mapping)
 
 
+from elasticsearch.helpers import bulk
+
+
 def index_events_from_jsonl(
     header: BlockHeader,
     events_jsonl: str,
@@ -103,8 +106,6 @@ def index_events_from_jsonl(
     Each non-empty line in ``events_jsonl`` must be a valid JSON object with an
     integer ``ingest_ts`` field. For line index ``i``, the document schema is:
 
-    .. code-block:: python
-
         {
             "tenant_id": header.tenant_id,
             "block_id": header.block_id,
@@ -113,22 +114,6 @@ def index_events_from_jsonl(
             "ingest_ts": event["ingest_ts"],
             "event": event,
         }
-
-    The documents are written using the Elasticsearch bulk API. Empty or
-    whitespace-only lines are ignored. If no documents remain after filtering,
-    no bulk request is issued.
-
-    Args:
-        header: Block header describing the sealed block.
-        events_jsonl: JSON Lines string (one canonical JSON object per line).
-        client: Elasticsearch client instance.
-        index_name: Name of the events index.
-
-    Raises:
-        ValueError: If ``events_jsonl`` is not a string, if an event is missing
-            ``ingest_ts``, or if ``ingest_ts`` is not an integer.
-        json.JSONDecodeError: If any non-empty line is not valid JSON.
-        Any exception raised by ``client.bulk``.
     """
     if not isinstance(events_jsonl, str):
         raise ValueError("events_jsonl must be a string")
@@ -136,7 +121,7 @@ def index_events_from_jsonl(
     ensure_events_index(client, index_name=index_name)
 
     lines = events_jsonl.splitlines()
-    operations: List[Dict[str, Any]] = []
+    actions = []
 
     for leaf_idx, line in enumerate(lines):
         if not line.strip():
@@ -159,19 +144,18 @@ def index_events_from_jsonl(
             "event": event,
         }
 
-        operations.append(
+        actions.append(
             {
-                "index": {
-                    "_index": index_name,
-                    "document": doc,
-                }
+                "_index": index_name,
+                "_source": doc,
             }
         )
 
-    if not operations:
+    if not actions:
         return
 
-    client.bulk(operations=operations)
+    # High-level helper that builds the bulk request correctly
+    bulk(client, actions)
 
 
 def search_events(
