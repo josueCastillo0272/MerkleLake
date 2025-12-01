@@ -9,7 +9,6 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from starlette.status import HTTP_201_CREATED
-
 from merklelake import es, ingest
 from merklelake.models import (
     CheckpointResponse,
@@ -20,33 +19,28 @@ from merklelake.models import (
     SearchRequest,
     SearchResponse,
 )
+from merklelake.checkpoint import publish_checkpoint
+
 from merklelake.proofs import builder
 from merklelake.storage import BlockStorage, BlockStorageConfig, get_minio_client
+from dataclasses import asdict
 
 app = FastAPI(title="MerkleLake", version="0.1.0")
 
 
 def get_storage() -> BlockStorage:
-    """Provides a configured BlockStorage instance.
-
-    Returns:
-        A ``BlockStorage`` instance backed by MinIO, using the default
-        bucket names ``"merklelake-blocks"`` and ``"merklelake-events"``.
-    """
+    """Provides a configured BlockStorage instance."""
     client = get_minio_client()
     config = BlockStorageConfig(
         blocks_bucket="merklelake-blocks",
         events_bucket="merklelake-events",
+        public_bucket="merklelake-public",
     )
     return BlockStorage(client, config)
 
 
 def get_es():
-    """Provides an Elasticsearch client instance.
-
-    Returns:
-        An Elasticsearch client configured via environment variables.
-    """
+    """Provides an Elasticsearch client instance."""
     return es.get_es_client()
 
 
@@ -71,17 +65,22 @@ def ingest_logs(
     block_id = f"{req.tenant_id}-{uuid.uuid4()}"
 
     try:
-        # Call the ingest pipeline
+        # 1. Seal and store the block
         header, _ = ingest.ingest_batch(
             events=events_payload,
             tenant_id=req.tenant_id,
             block_id=block_id,
             storage=storage,
         )
+
+        # 2. NEW: Publish the checkpoint immediately
+        # This writes to 'merklelake-public/checkpoints/{tenant}/latest.json'
+        # so that GET /v1/checkpoint can find it.
+        publish_checkpoint(storage, header)
+
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        # This catches the Elasticsearch BadRequestError
         raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
 
     return IngestResponse(
@@ -97,21 +96,6 @@ def search_logs(
     req: SearchRequest,
     es_client=Depends(get_es),
 ) -> SearchResponse:
-    """Searches logs for a given tenant using Elasticsearch.
-
-    The search is scoped to the tenant specified in the request and uses a
-    Lucene-style query string for text search. Results are paginated using
-    ``page`` and ``page_size``.
-
-    Args:
-        req: Search request containing tenant, query string, and pagination
-            parameters.
-        es_client: Elasticsearch client dependency.
-
-    Returns:
-        A ``SearchResponse`` containing search hits and an optional
-        ``next_page_token`` for pagination.
-    """
     offset = req.page * req.page_size
 
     resp = es.search_events(
@@ -148,25 +132,6 @@ def get_proof(
     leaf_idx: int,
     storage: BlockStorage = Depends(get_storage),
 ) -> ProofResponse:
-    """Returns a Merkle inclusion proof for a specific event.
-
-    This endpoint reconstructs the Merkle tree for the specified block from
-    storage, verifies integrity, and returns a Merkle path proving inclusion
-    of the leaf at ``leaf_idx``.
-
-    Args:
-        tenant_id: Tenant identifier for the block.
-        block_id: Block identifier from which to construct the proof.
-        leaf_idx: Zero-based leaf index within the block.
-
-    Returns:
-        A ``ProofResponse`` containing the proof path, block header, and root
-        hash.
-
-    Raises:
-        HTTPException: If proof generation fails for any reason (mapped to
-            HTTP 404).
-    """
     try:
         bundle = builder.build_proof_bundle(
             storage=storage,
@@ -174,7 +139,7 @@ def get_proof(
             block_id=block_id,
             leaf_idx=leaf_idx,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(
             status_code=404,
             detail=f"Proof generation failed: {exc}",
@@ -185,21 +150,23 @@ def get_proof(
     return ProofResponse(
         leaf_idx=bundle["leaf_idx"],
         path=hex_path,
-        block_header=bundle["block_header"],
+        # CHANGE THIS LINE: Convert the dataclass to a dict
+        block_header=asdict(bundle["block_header"]),
         root_hash=bundle["root_hash"],
     )
 
 
 @app.get("/v1/checkpoint", response_model=CheckpointResponse)
-def get_checkpoint() -> CheckpointResponse:
-    """Returns the latest anchored checkpoint (placeholder).
+def get_checkpoint(
+    tenant_id: str,
+    storage: BlockStorage = Depends(get_storage),
+) -> CheckpointResponse:
+    """Returns the latest anchored checkpoint.
 
-    This endpoint is a placeholder and will be implemented when checkpointing
-    and consensus logic are added.
-
-    Raises:
-        HTTPException: Always raises HTTP 501 (Not Implemented) until
-            checkpointing is implemented.
+    Fetches the latest.json from the public bucket for the given tenant.
     """
-    return CheckpointResponse(block_id="1234", link_hash="123", prev_link_hash="123")
-    # raise HTTPException(status_code=501, detail="Checkpointing not yet implemented")
+    data = storage.get_checkpoint(tenant_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="No checkpoint found for tenant")
+
+    return CheckpointResponse(**data)

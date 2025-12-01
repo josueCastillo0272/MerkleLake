@@ -3,12 +3,6 @@ Storage layer for MerkleLake blocks (object storage).
 
 This module provides helpers to construct a MinIO client from environment
 variables and a ``BlockStorage`` wrapper for reading and writing sealed blocks.
-
-Typical usage example:
-    client = get_minio_client()
-    config = BlockStorageConfig(blocks_bucket="blocks", events_bucket="events")
-    storage = BlockStorage(client=client, config=config)
-    storage.put_block(header, events_jsonl)
 """
 
 from __future__ import annotations
@@ -17,7 +11,7 @@ import io
 import json
 import os
 from dataclasses import dataclass, asdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from minio import Minio
@@ -26,23 +20,7 @@ from .proofs.chain import BlockHeader
 
 
 def _parse_secure_flag(value: str) -> bool:
-    """Converts a MERKLELAKE_MINIO_SECURE value to a boolean.
-
-    Accepted truthy values (case-insensitive) are:
-    "true", "1", "yes", "y", "on".
-
-    Accepted falsy values are:
-    "false", "0", "no", "n", "off", and the empty string.
-
-    Args:
-        value: Raw string flag from the environment.
-
-    Returns:
-        True if the flag is interpreted as secure, False otherwise.
-
-    Raises:
-        ValueError: If the value cannot be interpreted as a boolean flag.
-    """
+    """Converts a MERKLELAKE_MINIO_SECURE value to a boolean."""
     v = value.strip().lower()
     if v in ("true", "1", "yes", "y", "on"):
         return True
@@ -52,23 +30,7 @@ def _parse_secure_flag(value: str) -> bool:
 
 
 def get_minio_client() -> "Minio":
-    """Creates a MinIO client configured from environment variables.
-
-    The following environment variables are consulted:
-
-    * MERKLELAKE_MINIO_ENDPOINT: MinIO endpoint (default "localhost:9000").
-    * MERKLELAKE_MINIO_ACCESS_KEY: Access key (default "minioadmin").
-    * MERKLELAKE_MINIO_SECRET_KEY: Secret key (default "minioadmin").
-    * MERKLELAKE_MINIO_SECURE: TLS flag such as "true" or "false"
-        (default "false").
-
-    Returns:
-        A configured ``Minio`` client instance.
-
-    Raises:
-        ValueError: If the endpoint is empty or the secure flag is invalid.
-        ImportError: If the ``minio`` package is not installed.
-    """
+    """Creates a MinIO client configured from environment variables."""
     from minio import Minio  # type: ignore[import-not-found]
 
     endpoint = os.getenv("MERKLELAKE_MINIO_ENDPOINT", "localhost:9000").strip()
@@ -96,83 +58,46 @@ class BlockStorageConfig:
     Attributes:
         blocks_bucket: Bucket name for block headers (``block.json``).
         events_bucket: Bucket name for event payloads (``events.jsonl``).
+        public_bucket: Bucket name for public checkpoints.
     """
 
     blocks_bucket: str
     events_bucket: str
+    public_bucket: str = "merklelake-public"
 
 
 class BlockStorage:
-    """High-level API for storing MerkleLake blocks in MinIO.
-
-    This wrapper manages bucket creation and object naming. It does not
-    implement Merkle trees, proofs, or any cryptographic logic.
-    """
+    """High-level API for storing MerkleLake blocks in MinIO."""
 
     def __init__(
         self,
         client: "Minio",
         config: BlockStorageConfig,
     ) -> None:
-        """Initializes ``BlockStorage``.
-
-        Args:
-            client: A ``Minio`` client instance (or a compatible test double).
-            config: Storage configuration specifying bucket names.
-        """
         self._client = client
         self._config = config
 
     @property
     def client(self) -> "Minio":
-        """Returns the underlying MinIO client.
-
-        Returns:
-            The ``Minio`` client passed at initialization.
-        """
         return self._client
 
     @property
     def config(self) -> BlockStorageConfig:
-        """Returns the storage configuration.
-
-        Returns:
-            The ``BlockStorageConfig`` used by this instance.
-        """
         return self._config
 
     def ensure_buckets(self) -> None:
-        """Ensures that the configured buckets exist in MinIO.
-
-        For each bucket in the configuration, this method checks whether the
-        bucket exists and creates it if it does not.
-
-        Raises:
-            Any exception raised by the underlying MinIO client.
-        """
-        for bucket in (self._config.blocks_bucket, self._config.events_bucket):
-            exists = self._client.bucket_exists(bucket)
-            if not exists:
+        """Ensures that the configured buckets exist in MinIO."""
+        buckets = [
+            self._config.blocks_bucket,
+            self._config.events_bucket,
+            self._config.public_bucket,
+        ]
+        for bucket in buckets:
+            if not self._client.bucket_exists(bucket):
                 self._client.make_bucket(bucket)
 
     def put_block(self, header: BlockHeader, events_jsonl: str) -> None:
-        """Stores a sealed block (header and events) in object storage.
-
-        The header JSON and events JSONL are written to separate buckets using
-        the following key layout:
-
-        * ``<tenant_id>/<block_id>/block.json``
-        * ``<tenant_id>/<block_id>/events.jsonl``
-
-        Args:
-            header: Block header describing the sealed block.
-            events_jsonl: JSON Lines text containing the block's events.
-
-        Raises:
-            ValueError: If ``tenant_id`` or ``block_id`` on the header are
-                missing or empty, or if ``events_jsonl`` is not a string.
-            Any exception raised by the underlying MinIO client.
-        """
+        """Stores a sealed block (header and events) in object storage."""
         tenant_id = getattr(header, "tenant_id", None)
         block_id = getattr(header, "block_id", None)
 
@@ -212,18 +137,7 @@ class BlockStorage:
         )
 
     def get_block_header(self, tenant_id: str, block_id: str) -> BlockHeader:
-        """Retrieves the metadata file (``block.json``) for a specific block.
-
-        Args:
-            tenant_id: Tenant identifier.
-            block_id: Block identifier.
-
-        Returns:
-            A ``BlockHeader`` parsed from the stored ``block.json`` file.
-
-        Raises:
-            ValueError: If the header object cannot be fetched or parsed.
-        """
+        """Retrieves the metadata file (``block.json``) for a specific block."""
         key = f"{tenant_id}/{block_id}/block.json"
         try:
             response = self._client.get_object(self._config.blocks_bucket, key)
@@ -234,22 +148,11 @@ class BlockStorage:
             finally:
                 response.close()
                 response.release_conn()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise ValueError(f"Failed to fetch block header for {key}") from e
 
     def get_events_jsonl(self, tenant_id: str, block_id: str) -> str:
-        """Retrieves the raw event data (``events.jsonl``) for a block.
-
-        Args:
-            tenant_id: Tenant identifier.
-            block_id: Block identifier.
-
-        Returns:
-            A JSON Lines string containing all events in the block.
-
-        Raises:
-            ValueError: If the events file cannot be fetched.
-        """
+        """Retrieves the raw event data (``events.jsonl``) for a block."""
         key = f"{tenant_id}/{block_id}/events.jsonl"
         try:
             response = self._client.get_object(self._config.events_bucket, key)
@@ -259,5 +162,60 @@ class BlockStorage:
             finally:
                 response.close()
                 response.release_conn()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise ValueError(f"Failed to fetch events for {key}") from e
+
+    def get_checkpoint(self, tenant_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves the latest checkpoint for a tenant.
+
+        Returns:
+            The checkpoint dict if found, or None if no checkpoint exists.
+        """
+        key = f"checkpoints/{tenant_id}/latest.json"
+        try:
+            response = self._client.get_object(self._config.public_bucket, key)
+            try:
+                data = response.read()
+                return json.loads(data)
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception:
+            # If the object is not found (e.g. 404), return None
+            return None
+
+    def put_checkpoint(
+        self, tenant_id: str, checkpoint_data: Dict[str, Any], history_key: str
+    ) -> None:
+        """Writes a checkpoint to both latest.json and a history path.
+
+        Args:
+            tenant_id: The tenant identifier.
+            checkpoint_data: The dictionary content of the checkpoint.
+            history_key: The path for the immutable history snapshot
+                        (e.g., checkpoints/{tenant}/history/.../timestamp.json).
+        """
+        self.ensure_buckets()
+
+        payload_bytes = json.dumps(
+            checkpoint_data, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+        # 1. Write immutable history
+        self._client.put_object(
+            bucket_name=self._config.public_bucket,
+            object_name=history_key,
+            data=io.BytesIO(payload_bytes),
+            length=len(payload_bytes),
+            content_type="application/json",
+        )
+
+        # 2. Update mutable pointer (latest.json)
+        latest_key = f"checkpoints/{tenant_id}/latest.json"
+        self._client.put_object(
+            bucket_name=self._config.public_bucket,
+            object_name=latest_key,
+            data=io.BytesIO(payload_bytes),
+            length=len(payload_bytes),
+            content_type="application/json",
+        )
