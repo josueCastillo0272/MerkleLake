@@ -1,49 +1,43 @@
 """
 Elasticsearch helpers for MerkleLake.
 
-This module is responsible for:
+This module provides helpers to construct an Elasticsearch client, ensure the
+events index exists with the expected mapping, and index sealed block events
+from JSON Lines text.
 
-    - Constructing an Elasticsearch client from configuration.
-    - Ensuring the events index exists with the correct mappings.
-    - Indexing sealed block events from JSONL into the events index.
-
-It does NOT know about Merkle proofs; it simply stores searchable metadata
-about events, including (tenant_id, block_id, leaf_idx, root_hash_hex, ingest_ts).
+It does not implement Merkle proofs. It only stores searchable metadata about
+events, including ``tenant_id``, ``block_id``, ``leaf_idx``, ``root_hash_hex``,
+and ``ingest_ts``.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-if TYPE_CHECKING:  # pragma: no cover - type-checking only
+if TYPE_CHECKING:
     from elasticsearch import Elasticsearch
 
 from .proofs.chain import BlockHeader
 
 
 def get_es_client() -> "Elasticsearch":
-    """
-    Construct and return an Elasticsearch client.
+    """Creates an Elasticsearch client configured from environment variables.
 
-    Algorithm:
-        1. Read MERKLELAKE_ES_URL from environment (default "http://localhost:9200").
-        2. Instantiate an Elasticsearch client pointing at that URL.
-        3. Do not perform network calls here; health checks are left to callers.
+    The following environment variable is consulted:
 
-    Testing strategy:
-        - Unit tests can monkeypatch MERKLELAKE_ES_URL and
-            stub out the Elasticsearch constructor via a fake 'elasticsearch'
-            module, then assert the client was constructed with the expected
-            hosts argument.
+    * MERKLELAKE_ES_URL: Elasticsearch URL (default "http://localhost:9200").
+
+    This function only constructs the client; it does not perform any health
+    checks or network calls.
 
     Returns:
-        An Elasticsearch client instance.
+        An ``Elasticsearch`` client instance.
 
     Raises:
         ValueError: If the URL is empty or only whitespace.
-        ImportError: If the elasticsearch package is not installed.
+        ImportError: If the ``elasticsearch`` package is not installed.
     """
     from elasticsearch import Elasticsearch  # type: ignore[import-not-found]
 
@@ -51,7 +45,6 @@ def get_es_client() -> "Elasticsearch":
     if not url:
         raise ValueError("MERKLELAKE_ES_URL must not be empty")
 
-    # Use explicit hosts argument so tests can inspect it easily.
     return Elasticsearch(hosts=[url])
 
 
@@ -59,24 +52,26 @@ def ensure_events_index(
     client: "Elasticsearch",
     index_name: str = "merklelake-events",
 ) -> None:
-    """
-    Ensure the events index exists in Elasticsearch with the required mapping.
+    """Ensures the events index exists with the required mapping.
 
-    Target mapping (initial version):
-        - tenant_id: keyword
-        - block_id: keyword
-        - leaf_idx: integer
-        - root_hash_hex: keyword
-        - ingest_ts: long
-        - event: object (enabled)
+    The initial mapping uses the following field types:
 
-    Algorithm:
-        1. Call client.indices.exists(index=index_name).
-        2. If True, return immediately (idempotent).
-        3. If False, call client.indices.create(index=index_name, body=<mapping>).
+    * tenant_id: keyword
+    * block_id: keyword
+    * leaf_idx: integer
+    * root_hash_hex: keyword
+    * ingest_ts: long
+    * event: object (enabled)
+
+    If the index already exists, this function is a no-op.
+
+    Args:
+        client: Elasticsearch client instance.
+        index_name: Name of the events index.
 
     Raises:
-        Any exception from client.indices.exists or client.indices.create.
+        Any exception raised by ``client.indices.exists`` or
+        ``client.indices.create``.
     """
     if client.indices.exists(index=index_name):
         return
@@ -89,7 +84,6 @@ def ensure_events_index(
                 "leaf_idx": {"type": "integer"},
                 "root_hash_hex": {"type": "keyword"},
                 "ingest_ts": {"type": "long"},
-                # Store the full original event for later inspection/search.
                 "event": {"type": "object", "enabled": True},
             }
         }
@@ -104,44 +98,37 @@ def index_events_from_jsonl(
     client: "Elasticsearch",
     index_name: str = "merklelake-events",
 ) -> None:
-    """
-    Index each event from a sealed block into Elasticsearch.
+    """Indexes each event from a sealed block into Elasticsearch.
 
-    Input:
-        - header: BlockHeader describing the sealed block.
-        - events_jsonl: JSON Lines string (one canonical JSON object per line).
-        - client: Elasticsearch client.
-        - index_name: name of the events index.
+    Each non-empty line in ``events_jsonl`` must be a valid JSON object with an
+    integer ``ingest_ts`` field. For line index ``i``, the document schema is:
 
-    Document schema for each event:
+    .. code-block:: python
+
         {
             "tenant_id": header.tenant_id,
             "block_id": header.block_id,
-            "leaf_idx": <line index, starting at 0>,
+            "leaf_idx": i,
             "root_hash_hex": header.root_hash_hex,
-            "ingest_ts": <event["ingest_ts"]>,
-            "event": <full parsed event object>
+            "ingest_ts": event["ingest_ts"],
+            "event": event,
         }
 
-    Algorithm:
-        1. Ensure the events index exists by calling ensure_events_index().
-        2. Split events_jsonl by newline to obtain lines; ignore empty lines.
-        3. For each non-empty line with index i:
-            a. Parse JSON into an event dict.
-            b. Extract ingest_ts = event["ingest_ts"] and validate it's an int.
-            c. Construct a document dict with the fields above.
-        4. Build an Elasticsearch bulk operations list in the form:
-                {"index": {"_index": index_name, "document": doc}}
-                for each document.
-        5. If there are no documents (e.g., all lines empty), return without
-            calling bulk().
-        6. Call client.bulk(operations=operations).
+    The documents are written using the Elasticsearch bulk API. Empty or
+    whitespace-only lines are ignored. If no documents remain after filtering,
+    no bulk request is issued.
+
+    Args:
+        header: Block header describing the sealed block.
+        events_jsonl: JSON Lines string (one canonical JSON object per line).
+        client: Elasticsearch client instance.
+        index_name: Name of the events index.
 
     Raises:
-        ValueError: If events_jsonl is not a string, or if an event is missing
-            ingest_ts or has a non-integer ingest_ts.
+        ValueError: If ``events_jsonl`` is not a string, if an event is missing
+            ``ingest_ts``, or if ``ingest_ts`` is not an integer.
         json.JSONDecodeError: If any non-empty line is not valid JSON.
-        Any exception from client.bulk.
+        Any exception raised by ``client.bulk``.
     """
     if not isinstance(events_jsonl, str):
         raise ValueError("events_jsonl must be a string")
@@ -149,11 +136,10 @@ def index_events_from_jsonl(
     ensure_events_index(client, index_name=index_name)
 
     lines = events_jsonl.splitlines()
-    operations = []
+    operations: List[Dict[str, Any]] = []
 
     for leaf_idx, line in enumerate(lines):
         if not line.strip():
-            # Ignore purely empty/whitespace lines.
             continue
 
         event = json.loads(line)
@@ -182,8 +168,54 @@ def index_events_from_jsonl(
             }
         )
 
-    # If there is nothing to index (e.g., empty JSONL), do nothing.
     if not operations:
         return
 
     client.bulk(operations=operations)
+
+
+def search_events(
+    client: "Elasticsearch",
+    tenant_id: str,
+    query_string: str = "*",
+    index_name: str = "merklelake-events",
+    limit: int = 10,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Searches for events belonging to a tenant using a Lucene query string.
+
+    This helper wraps a filtered Elasticsearch search. Results are restricted to
+    the given ``tenant_id`` using a term filter, combined with a
+    ``query_string`` query for text search. Results are sorted by
+    ``ingest_ts`` in descending order.
+
+    Args:
+        client: Elasticsearch client instance.
+        tenant_id: Tenant identifier used as a filter.
+        query_string: Lucene query string (for example, "message:error" or "*").
+            If blank or whitespace, it is treated as "*".
+        index_name: Index to search against.
+        limit: Maximum number of hits to return.
+        offset: Number of hits to skip (for pagination).
+
+    Returns:
+        The raw Elasticsearch response dictionary, typically containing keys
+        such as ``"took"`` and ``"hits"``.
+    """
+    q = query_string.strip()
+    if not q:
+        q = "*"
+
+    body = {
+        "query": {
+            "bool": {
+                "filter": [{"term": {"tenant_id": tenant_id}}],
+                "must": [{"query_string": {"query": q}}],
+            }
+        },
+        "from": offset,
+        "size": limit,
+        "sort": [{"ingest_ts": {"order": "desc"}}],
+    }
+
+    return client.search(index=index_name, body=body)
