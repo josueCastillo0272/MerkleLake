@@ -4,7 +4,7 @@
 
 Every search result includes the data necessary to cryptographically verify that the log entry has not been altered since insertion and is part of a linear, append-only chain.
 
-## 🚀 Key Features
+## Key Features
 
 * **Tamper-Evidence:** Logs are sealed in batches. Each batch produces a Merkle Root.
 * **Immutable History:** Blocks are linked via a hash chain (blockchain-style). Modifying an old block breaks the chain.
@@ -12,7 +12,7 @@ Every search result includes the data necessary to cryptographically verify that
 * **Scalable Storage:** Raw event data is stored in object storage (MinIO/S3), while lightweight metadata is indexed in Elasticsearch.
 * **Public Anchoring:** Supports publishing "checkpoints" to a public location to prevent history rewriting/split-view attacks.
 
-## 🏗 Architecture
+## Architecture
 
 The system consists of the following core components:
 
@@ -24,12 +24,12 @@ The system consists of the following core components:
     * `merklelake-public`: Public checkpoints.
 4.  **Search Index (Elasticsearch):** Indexes metadata (`tenant_id`, `timestamp`, `block_id`, `leaf_idx`) for querying.
 
-## 🛠️ Prerequisites
+## Prerequisites
 
 * **Python 3.10+**
 * **Docker & Docker Compose** (for running local infrastructure)
 
-## 📦 Installation & Setup
+## Installation & Setup
 
 1.  **Clone the repository:**
     ```bash
@@ -50,7 +50,7 @@ The system consists of the following core components:
     pip install .
     ```
 
-## 🏃‍♂️ Running the Server
+## Running the Server
 
 Start the FastAPI server using Uvicorn:
 
@@ -59,7 +59,7 @@ uvicorn merklelake.api:app --reload --host 0.0.0.0 --port 8000
 ```
 The API will be available at `http://localhost:8000`. You can view the interactive documentation at `http://localhost:8000/docs`.
 
-## 🔌 API Usage Examples
+## API Usage Examples
 
 ### 1. Ingest Logs (`POST /v1/logs`)
 Submit a batch of logs to be sealed.
@@ -160,7 +160,7 @@ curl "http://localhost:8000/v1/checkpoint?tenant_id=acme-corp"
   "published_at": "2025-11-09T23:00:00Z"
 }
 ```
-## ⚙️ Configuration
+## Configuration
 
 Configuration is handled via environment variables.  
 The system comes with sensible defaults for local development (matching `docker-compose.yml`).
@@ -175,7 +175,7 @@ The system comes with sensible defaults for local development (matching `docker-
 
 ---
 
-## 🧪 Testing
+## Testing
 
 The project includes a suite of specification tests (`tests/*_spec.py`)  
 that verify the cryptographic correctness and storage logic.
@@ -187,7 +187,7 @@ pytest
 ```
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 src/merklelake/api.py — FastAPI routes and application entry point  
 src/merklelake/ingest.py — Orchestrates sealing, storage, and indexing  
