@@ -9,7 +9,4 @@ Requires-Dist: uvicorn[standard]
 Requires-Dist: pydantic
 Requires-Dist: minio
 Requires-Dist: elasticsearch==8.15.0
-
-# MerkleLake
-
-A verifiable log storage + search system with cryptographic proofs.
+Requires-Dist: pyjwt

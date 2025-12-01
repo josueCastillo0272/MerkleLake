@@ -1,6 +1,6 @@
 [project]
 name = "merklelake"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tamper-evident log core (Week 1 skeleton: Merkle + headers + sealing)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,7 +9,8 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "minio",
-    "elasticsearch==8.15.0"
+    "elasticsearch==8.15.0",
+    "pyjwt"
 ]
 
 [tool.pytest.ini_options]

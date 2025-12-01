@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/merklelake/__init__.py
 src/merklelake/api.py
+src/merklelake/checkpoint.py
 src/merklelake/es.py
 src/merklelake/ingest.py
 src/merklelake/main.py

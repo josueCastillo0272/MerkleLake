@@ -3,3 +3,4 @@ uvicorn[standard]
 pydantic
 minio
 elasticsearch==8.15.0
+pyjwt
