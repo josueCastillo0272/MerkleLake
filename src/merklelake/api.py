@@ -59,17 +59,19 @@ def ingest_logs(
     current_time = int(time.time() * 1000)
 
     for e in req.events:
+        # Use model_dump to get a dict
         ev_dict = e.model_dump(exclude_unset=True)
 
         if "ingest_ts" not in ev_dict:
             ev_dict["ingest_ts"] = current_time
 
         events_payload.append(ev_dict)
-    print(events_payload)
 
+    # Generate a unique block ID
     block_id = f"{req.tenant_id}-{uuid.uuid4()}"
 
     try:
+        # Call the ingest pipeline
         header, _ = ingest.ingest_batch(
             events=events_payload,
             tenant_id=req.tenant_id,
@@ -79,8 +81,15 @@ def ingest_logs(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        # TEMP: surface the real error instead of generic 500
+        # This catches the Elasticsearch BadRequestError
         raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
+
+    return IngestResponse(
+        block_id=header.block_id,
+        root_hash=header.root_hash_hex,
+        ts_range=(header.ts_start, header.ts_end),
+        accepted_count=len(events_payload),
+    )
 
 
 @app.post("/v1/search", response_model=SearchResponse)

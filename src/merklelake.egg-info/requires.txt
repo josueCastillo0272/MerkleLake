@@ -2,4 +2,4 @@ fastapi
 uvicorn[standard]
 pydantic
 minio
-elasticsearch
+elasticsearch==8.15.0

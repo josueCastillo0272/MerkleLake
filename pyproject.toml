@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "minio",
-    "elasticsearch"
+    "elasticsearch==8.15.0"
 ]
 
 [tool.pytest.ini_options]

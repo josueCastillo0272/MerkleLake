@@ -8,7 +8,7 @@ Requires-Dist: fastapi
 Requires-Dist: uvicorn[standard]
 Requires-Dist: pydantic
 Requires-Dist: minio
-Requires-Dist: elasticsearch
+Requires-Dist: elasticsearch==8.15.0
 
 # MerkleLake
 
