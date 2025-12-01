@@ -150,7 +150,6 @@ def get_proof(
     return ProofResponse(
         leaf_idx=bundle["leaf_idx"],
         path=hex_path,
-        # CHANGE THIS LINE: Convert the dataclass to a dict
         block_header=asdict(bundle["block_header"]),
         root_hash=bundle["root_hash"],
     )
